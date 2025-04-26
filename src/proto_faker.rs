@@ -6,7 +6,14 @@ use fake::faker::name::en::Name;
 use fake::faker::phone_number::en::PhoneNumber as FakePhoneNumber;
 use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, Value};
 use rand::Rng;
+use rand::seq::SliceRandom;
+use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
+
+use crate::option_parser;
+use crate::option_parser::parse_options;
+use crate::proto_loader::ProtoLoader;
 
 pub struct ProtoFaker;
 
@@ -18,14 +25,43 @@ impl ProtoFaker {
     /// Generate a random protobuf message based on its descriptor
     pub fn generate_dynamic(
         &self,
+        loader: &ProtoLoader,
         message_descriptor: &MessageDescriptor,
     ) -> Result<DynamicMessage> {
         let mut message = DynamicMessage::new(message_descriptor.clone());
+        let mut rng = rand::thread_rng();
 
         for field in message_descriptor.fields() {
-            if rand::random::<f32>() < 0.95 {
-                // 95% chance to populate each field
-                let value = self.generate_field_value(&field)?;
+            let comment = loader.get_comment(
+                message_descriptor.parent_file().name(),
+                message_descriptor.name(),
+                field.name(),
+            )?;
+
+            let options = comment.map(|p| parse_options(&p)).unwrap_or(HashMap::new());
+
+            // Check if field is repeated by examining its cardinality
+            let is_repeated = field.cardinality() == prost_reflect::Cardinality::Repeated;
+
+            if is_repeated {
+                let count = match options.get("count") {
+                    Some(option_parser::Value::Int(i)) => *i..*i,
+                    Some(option_parser::Value::Range(s, e)) => *s..*e,
+                    None => 1..1,
+                    _ => unimplemented!(),
+                };
+                let count = rng.gen_range(count.start..count.end + 1);
+
+                if count > 0 {
+                    let mut values = Vec::new();
+                    for _ in 0..count {
+                        values.push(self.generate_field_value(&field, &options, loader)?);
+                    }
+                    message.set_field(&field, Value::List(values));
+                }
+            } else if rand::random::<f32>() < 0.95 {
+                // 95% chance to populate each non-repeated field
+                let value = self.generate_field_value(&field, &options, loader)?;
                 message.set_field(&field, value);
             }
         }
@@ -33,8 +69,13 @@ impl ProtoFaker {
         Ok(message)
     }
 
-    /// Generate a random value for a field based on its type
-    fn generate_field_value(&self, field: &FieldDescriptor) -> Result<Value> {
+    /// Generate a random value for a field based on its type and attributes
+    fn generate_field_value(
+        &self,
+        field: &FieldDescriptor,
+        options: &HashMap<String, option_parser::Value>,
+        loader: &ProtoLoader,
+    ) -> Result<Value> {
         let mut rng = rand::thread_rng();
 
         match field.kind() {
@@ -50,19 +91,38 @@ impl ProtoFaker {
             Kind::Uint64 | Kind::Fixed64 => Ok(Value::U64(rng.r#gen_range(0..20000))),
             Kind::Bool => Ok(Value::Bool(rng.r#gen_bool(0.5))),
             Kind::String => {
-                // Choose appropriate fake data based on field name
+                match options.get("words") {
+                    Some(&option_parser::Value::Int(i)) => {
+                        return Ok(Value::String(Sentence(i as usize..i as usize).fake()));
+                    }
+                    Some(&option_parser::Value::Range(s, e)) => {
+                        return Ok(Value::String(Sentence(s as usize..e as usize).fake()));
+                    }
+                    Some(option_parser::Value::ListStr(l)) => {
+                        return Ok(Value::String(l.choose(&mut rng).unwrap().clone()));
+                    }
+                    Some(_) => unimplemented!(),
+                    None => (),
+                }
+
                 let field_name = field.name().to_lowercase();
-                let value = if field_name.contains("name") {
-                    Name().fake()
-                } else if field_name.contains("email") {
-                    SafeEmail().fake()
-                } else if field_name.contains("phone") || field_name.contains("number") {
-                    FakePhoneNumber().fake()
-                } else {
-                    // Default to a random sentence for other string fields
-                    Sentence(1..3).fake()
-                };
-                Ok(Value::String(value))
+
+                if Some(option_parser::Value::Str("uuid".to_string()))
+                    == options.get("string").cloned()
+                    || field_name == "uuid"
+                    || field_name == "id"
+                {
+                    return Ok(Value::String(Uuid::new_v4().to_string()));
+                }
+
+                match field_name {
+                    s if s.contains("name") => Ok(Value::String(Name().fake())),
+                    s if s.contains("email") => Ok(Value::String(SafeEmail().fake())),
+                    s if s.contains("phone") || s.contains("number") => {
+                        Ok(Value::String(FakePhoneNumber().fake()))
+                    }
+                    _ => Ok(Value::String(Sentence(1..3).fake())),
+                }
             }
             Kind::Bytes => {
                 // Generate random bytes
@@ -87,7 +147,7 @@ impl ProtoFaker {
                     Ok(Value::Message(timestamp_msg))
                 } else {
                     // Recursively generate nested message
-                    let nested_message = self.generate_dynamic(&message_type)?;
+                    let nested_message = self.generate_dynamic(loader, &message_type)?;
                     Ok(Value::Message(nested_message))
                 }
             }
@@ -108,6 +168,8 @@ impl ProtoFaker {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use super::*;
     use crate::proto_loader::ProtoLoader;
     use prost::Message;
@@ -120,7 +182,7 @@ mod tests {
         let message_descriptor = loader.get_message_descriptor("person.Person")?;
         let faker = ProtoFaker::new();
 
-        let message = faker.generate_dynamic(&message_descriptor)?;
+        let message = faker.generate_dynamic(&loader, &message_descriptor)?;
 
         // Verify the message has data
         assert!(message.get_field_by_name("name").is_some());
@@ -151,13 +213,61 @@ mod tests {
 
         // Test Person message
         let person_descriptor = loader.get_message_descriptor("person.Person")?;
-        let person = faker.generate_dynamic(&person_descriptor)?;
+        let person = faker.generate_dynamic(&loader, &person_descriptor)?;
         assert!(person.get_field_by_name("name").is_some());
 
         // Test PhoneNumber message
         let phone_descriptor = loader.get_message_descriptor("person.Person.PhoneNumber")?;
-        let phone = faker.generate_dynamic(&phone_descriptor)?;
+        let phone = faker.generate_dynamic(&loader, &phone_descriptor)?;
         assert!(phone.get_field_by_name("number").is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_comment_attributes() -> Result<()> {
+        let mut loader = ProtoLoader::new();
+        loader.load_proto_file("proto/person.proto")?;
+
+        let message_descriptor = loader.get_message_descriptor("person.Person")?;
+        let faker = ProtoFaker::new();
+
+        let message = faker.generate_dynamic(&loader, &message_descriptor)?;
+
+        // Check that name has 1-3 words
+        if let Some(Cow::Borrowed(Value::String(name))) = message.get_field_by_name("name") {
+            let word_count = name.split_whitespace().count();
+            assert!(
+                (1..=3).contains(&word_count),
+                "Name '{}' should have 1-3 words, has {}",
+                name,
+                word_count
+            );
+        } else {
+            panic!("No Name Field");
+        }
+
+        // Check that uuid is a valid UUID
+        if let Some(Cow::Borrowed(Value::String(uuid_str))) = message.get_field_by_name("uuid") {
+            assert!(
+                Uuid::parse_str(uuid_str).is_ok(),
+                "Invalid UUID: {}",
+                uuid_str
+            );
+        } else {
+            panic!("No UUID");
+        }
+
+        // Check that phones has 1-3 entries
+        if let Some(Cow::Borrowed(Value::List(phones))) = message.get_field_by_name("phones") {
+            assert!(
+                !phones.is_empty() && phones.len() <= 3,
+                "Phones should have 1-3 entries, has {}",
+                phones.len()
+            );
+        } else {
+            panic!("No phones");
+        }
 
         Ok(())
     }

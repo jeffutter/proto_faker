@@ -1,3 +1,4 @@
+mod option_parser;
 mod proto_faker;
 mod proto_loader;
 
@@ -47,7 +48,7 @@ fn main() -> Result<()> {
         if args.count > 1 {
             println!("\n--- Message {} ---", i + 1);
         }
-        let message = faker.generate_dynamic(&message_descriptor)?;
+        let message = faker.generate_dynamic(&loader, &message_descriptor)?;
 
         // Encode the message to bytes
         let encoded = message.encode_to_vec();

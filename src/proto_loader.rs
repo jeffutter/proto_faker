@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use prost_reflect::{DescriptorPool, MessageDescriptor};
+use prost_types::FileDescriptorProto;
 use std::fs;
 use std::path::Path;
 
@@ -29,6 +30,7 @@ impl ProtoLoader {
 
         // Run protoc to generate the file descriptor set
         let status = std::process::Command::new(protoc)
+            .arg("--include_source_info")
             .arg("--include_imports")
             .arg(format!("--proto_path={}", include_path.display()))
             .arg(format!("--descriptor_set_out={}", output_path.display()))
@@ -56,5 +58,53 @@ impl ProtoLoader {
         self.pool
             .get_message_by_name(message_name)
             .with_context(|| format!("Message type not found: {}", message_name))
+    }
+
+    pub fn get_file_descriptor_proto(&self, file_name: &str) -> Result<FileDescriptorProto> {
+        self.pool
+            .get_file_by_name(file_name)
+            .map(|f| f.file_descriptor_proto().clone())
+            .with_context(|| format!("File not found: {}", file_name))
+    }
+
+    pub fn get_comment(
+        &self,
+        file_name: &str,
+        message_name: &str,
+        field_name: &str,
+    ) -> Result<Option<String>> {
+        match self.get_file_descriptor_proto(file_name) {
+            Ok(file) => {
+                if let Some(message) = file.message_type.iter().find(|m| m.name() == message_name) {
+                    if let Some(field_index) =
+                        message.field.iter().position(|f| f.name() == field_name)
+                    {
+                        if let Some(message_index) = file
+                            .message_type
+                            .iter()
+                            .position(|m| m.name() == message_name)
+                        {
+                            // Build the expected path to the field:
+                            // [4, message_index, 2, field_index]
+                            // (we assume top-level message)
+                            let path = vec![4, message_index as i32, 2, field_index as i32];
+
+                            if let Some(source_code_info) = file.source_code_info {
+                                for location in source_code_info.location.iter() {
+                                    if location.path == path {
+                                        if let Some(comment) = &location.leading_comments {
+                                            return Ok(Some(comment.clone()));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
     }
 }
