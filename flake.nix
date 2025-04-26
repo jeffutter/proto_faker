@@ -45,6 +45,8 @@
               clang
               rust-analyzer
               rustc
+              rdkafka
+              protobuf
             ];
             buildInputs = with pkgs; [ ] ++ lib.optionals stdenv.isDarwin [ libiconv ];
           }
@@ -110,6 +112,8 @@
               rustc
               rustfmt
               confluent-platform
+              rdkafka
+              protobuf
               (pkgs.writeShellScriptBin "start-kafka" ''
                 #!/bin/bash
 
