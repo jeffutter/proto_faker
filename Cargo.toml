@@ -14,3 +14,4 @@ bytes = "1.0"
 anyhow = "1.0"
 tempfile = "3.8"
 protoc-bin-vendored = "3.0"
+clap = { version = "4.4", features = ["derive"] }
