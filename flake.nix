@@ -47,6 +47,9 @@
               rustc
               rdkafka
               protobuf
+              pkg-config
+              cmake
+              openssl
             ];
             buildInputs = with pkgs; [ ] ++ lib.optionals stdenv.isDarwin [ libiconv ];
           }
@@ -66,9 +69,15 @@
             text = ''
               advertised.listeners=PLAINTEXT://localhost:9092
               broker.id=0
+              cluster.link.metadata.topic.replication.factor=1
               config.storage.replication.factor=1
+              confluent.balancer.topic.replication.factor=1
+              confluent.cluster.link.metadata.topic.replication.factor=1
+              confluent.durability.topic.replication.factor=1
               confluent.license.topic.replication.factor=1
+              confluent.telemetry.enabled=false
               confluent.telemetry.message.topic.replication.factor=1
+              confluent.tier.metadata.replication.factor=1
               controller.listener.names=CONTROLLER
               controller.quorum.voters=0@localhost:9093
               default.replication.factor=1
@@ -114,7 +123,11 @@
               rustfmt
               confluent-platform
               rdkafka
+              pkg-config
+              cmake
+              openssl
               protobuf
+              kcat
               (pkgs.writeShellScriptBin "start-kafka" ''
                 #!/bin/bash
 
@@ -124,6 +137,8 @@
                   echo "First argument must be a path to a data directory"
                   exit 1
                 fi
+
+                export KAFKA_OPTS="-Djava.net.preferIPv4Stack=t"
 
                 ${confluent-platform}/bin/kafka-server-start ${serverProperties} --override log.dirs="''${path}/"
               '')
