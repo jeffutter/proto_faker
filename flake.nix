@@ -68,6 +68,7 @@
               broker.id=0
               config.storage.replication.factor=1
               confluent.license.topic.replication.factor=1
+              confluent.telemetry.message.topic.replication.factor=1
               controller.listener.names=CONTROLLER
               controller.quorum.voters=0@localhost:9093
               default.replication.factor=1
