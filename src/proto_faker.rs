@@ -6,7 +6,7 @@ use fake::faker::name::en::Name;
 use fake::faker::phone_number::en::PhoneNumber as FakePhoneNumber;
 use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, Value};
 use rand::Rng;
-use rand::seq::SliceRandom;
+use rand::seq::IndexedRandom;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -29,7 +29,7 @@ impl ProtoFaker {
         message_descriptor: &MessageDescriptor,
     ) -> Result<DynamicMessage> {
         let mut message = DynamicMessage::new(message_descriptor.clone());
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         for field in message_descriptor.fields() {
             let comment = loader.get_comment(
@@ -50,7 +50,7 @@ impl ProtoFaker {
                     None => 1..1,
                     _ => unimplemented!(),
                 };
-                let count = rng.gen_range(count.start..count.end + 1);
+                let count = rng.random_range(count.start..count.end + 1);
 
                 if count > 0 {
                     let mut values = Vec::new();
@@ -76,20 +76,20 @@ impl ProtoFaker {
         options: &HashMap<String, option_parser::Value>,
         loader: &ProtoLoader,
     ) -> Result<Value> {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         match field.kind() {
-            Kind::Double => Ok(Value::F64(rng.r#gen_range(-1000.0..1000.0))),
-            Kind::Float => Ok(Value::F32(rng.r#gen_range(-1000.0..1000.0))),
+            Kind::Double => Ok(Value::F64(rng.r#random_range(-1000.0..1000.0))),
+            Kind::Float => Ok(Value::F32(rng.r#random_range(-1000.0..1000.0))),
             Kind::Int32 | Kind::Sint32 | Kind::Sfixed32 => {
-                Ok(Value::I32(rng.r#gen_range(-10000..10000)))
+                Ok(Value::I32(rng.r#random_range(-10000..10000)))
             }
             Kind::Int64 | Kind::Sint64 | Kind::Sfixed64 => {
-                Ok(Value::I64(rng.r#gen_range(-10000..10000)))
+                Ok(Value::I64(rng.r#random_range(-10000..10000)))
             }
-            Kind::Uint32 | Kind::Fixed32 => Ok(Value::U32(rng.r#gen_range(0..20000))),
-            Kind::Uint64 | Kind::Fixed64 => Ok(Value::U64(rng.r#gen_range(0..20000))),
-            Kind::Bool => Ok(Value::Bool(rng.r#gen_bool(0.5))),
+            Kind::Uint32 | Kind::Fixed32 => Ok(Value::U32(rng.r#random_range(0..20000))),
+            Kind::Uint64 | Kind::Fixed64 => Ok(Value::U64(rng.r#random_range(0..20000))),
+            Kind::Bool => Ok(Value::Bool(rng.r#random_bool(0.5))),
             Kind::String => {
                 match options.get("words") {
                     Some(&option_parser::Value::Int(i)) => {
@@ -126,8 +126,8 @@ impl ProtoFaker {
             }
             Kind::Bytes => {
                 // Generate random bytes
-                let len = rng.r#gen_range(4..20);
-                let bytes: Vec<u8> = (0..len).map(|_| rng.r#gen::<u8>()).collect();
+                let len = rng.r#random_range(4..20);
+                let bytes: Vec<u8> = (0..len).map(|_| rng.r#random::<u8>()).collect();
                 Ok(Value::Bytes(bytes.into()))
             }
             Kind::Message(message_type) => {
@@ -136,13 +136,13 @@ impl ProtoFaker {
                     let now = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .unwrap_or_default();
-                    let offset = rng.gen_range(-86400..86400); // +/- 1 day in seconds
+                    let offset = rng.random_range(-86400..86400); // +/- 1 day in seconds
 
                     let mut timestamp_msg = DynamicMessage::new(message_type);
                     timestamp_msg
                         .set_field_by_name("seconds", Value::I64((now.as_secs() as i64) + offset));
                     timestamp_msg
-                        .set_field_by_name("nanos", Value::I32(rng.r#gen_range(0..999_999_999)));
+                        .set_field_by_name("nanos", Value::I32(rng.r#random_range(0..999_999_999)));
 
                     Ok(Value::Message(timestamp_msg))
                 } else {
@@ -156,7 +156,7 @@ impl ProtoFaker {
                 let values = enum_type.values();
                 let values: Vec<_> = values.collect();
                 if !values.is_empty() {
-                    let idx = rng.r#gen_range(0..values.len());
+                    let idx = rng.r#random_range(0..values.len());
                     Ok(Value::EnumNumber(values[idx].number()))
                 } else {
                     Ok(Value::EnumNumber(0)) // Default to 0 if no values

@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-prost = "0.12"
-prost-types = "0.12"
-prost-reflect = "0.12"
-fake = { version = "2.9", features = ["derive"] }
-rand = "0.8"
+prost = "0.13"
+prost-types = "0.13"
+prost-reflect = "0.15"
+fake = { version = "4.3", features = ["derive"] }
+rand = "0.9"
 chrono = "0.4"
 bytes = "1.0"
 anyhow = "1.0"
@@ -18,7 +18,7 @@ clap = { version = "4.4", features = ["derive"] }
 regex = "1.10.3"
 uuid = { version = "1.7.0", features = ["v4"] }
 winnow = "0.7.7"
-rdkafka = { version = "0.34", features = ["ssl", "cmake-build"] }
+rdkafka = { version = "0.37", features = ["ssl", "cmake-build"] }
 schema_registry_converter = { version = "4.0", features = ["proto_raw"] }
 tokio = { version = "1.35", features = ["full"] }
 futures = "0.3.31"
