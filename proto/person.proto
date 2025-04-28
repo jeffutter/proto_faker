@@ -5,19 +5,20 @@ package person;
 import "google/protobuf/timestamp.proto";
 
 message Person {
-  string name = 1; // words=1..3
-  string uuid = 2; // string=uuid
-  int32 id = 3;    // Unique ID number for this person.
-  string email = 4;
+  string name = 1;    // words=1..3
+  string uuid = 2;    // string=uuid
+  string user_id = 3; // pool=user_id
+  int32 id = 4;       // Unique ID number for this person.
+  string email = 5;
 
   message PhoneNumber {
     string number = 1;
     PhoneType type = 2;
   }
 
-  repeated PhoneNumber phones = 5; // count=1..3
+  repeated PhoneNumber phones = 6; // count=1..3
 
-  google.protobuf.Timestamp last_updated = 6;
+  google.protobuf.Timestamp last_updated = 7;
 }
 
 enum PhoneType {

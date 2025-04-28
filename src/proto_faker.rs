@@ -11,15 +11,69 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
-use crate::option_parser;
 use crate::option_parser::parse_options;
 use crate::proto_loader::ProtoLoader;
+use crate::{PoolConfig, option_parser};
 
-pub struct ProtoFaker;
+pub struct ProtoFaker {
+    pools: HashMap<String, Vec<Value>>,
+}
 
 impl ProtoFaker {
-    pub fn new() -> Self {
-        ProtoFaker
+    pub fn new(pool_configs: Vec<PoolConfig>) -> Self {
+        let mut pools = HashMap::new();
+
+        for PoolConfig { name, items, value } in pool_configs {
+            match value {
+                option_parser::ValueType::I32 => pools.insert(
+                    name,
+                    fake::vec![i32; items].into_iter().map(Value::I32).collect(),
+                ),
+                option_parser::ValueType::I64 => pools.insert(
+                    name,
+                    fake::vec![i64; items].into_iter().map(Value::I64).collect(),
+                ),
+                option_parser::ValueType::U32 => pools.insert(
+                    name,
+                    fake::vec![u32; items].into_iter().map(Value::U32).collect(),
+                ),
+                option_parser::ValueType::U64 => pools.insert(
+                    name,
+                    fake::vec![u64; items].into_iter().map(Value::U64).collect(),
+                ),
+                option_parser::ValueType::F32 => pools.insert(
+                    name,
+                    fake::vec![f32; items].into_iter().map(Value::F32).collect(),
+                ),
+                option_parser::ValueType::F64 => pools.insert(
+                    name,
+                    fake::vec![f64; items].into_iter().map(Value::F64).collect(),
+                ),
+                option_parser::ValueType::String => pools.insert(
+                    name,
+                    fake::vec![String; items]
+                        .into_iter()
+                        .map(Value::String)
+                        .collect(),
+                ),
+                option_parser::ValueType::Bytes => pools.insert(
+                    name,
+                    fake::vec![Vec<u8>; items]
+                        .into_iter()
+                        .map(|b| Value::Bytes(b.into()))
+                        .collect(),
+                ),
+                option_parser::ValueType::Uuid => pools.insert(
+                    name,
+                    fake::vec![Uuid; items]
+                        .into_iter()
+                        .map(|u| Value::String(u.into()))
+                        .collect(),
+                ),
+            };
+        }
+
+        ProtoFaker { pools }
     }
 
     /// Generate a random protobuf message based on its descriptor
@@ -91,6 +145,23 @@ impl ProtoFaker {
             Kind::Uint64 | Kind::Fixed64 => Ok(Value::U64(rng.r#random_range(0..20000))),
             Kind::Bool => Ok(Value::Bool(rng.r#random_bool(0.5))),
             Kind::String => {
+                if let Some(option_parser::Value::Str(s)) = options.get("pool") {
+                    if let Some(pool) = self.pools.get(s) {
+                        if let Some(v) = pool.choose(&mut rng) {
+                            if let Value::String(s) = v {
+                                return Ok(Value::String(s.clone()));
+                            }
+                            panic!(
+                                "Specified Pool '{}' has wrong type on field {}",
+                                s,
+                                field.name()
+                            )
+                        }
+                        panic!("Specified Pool '{}' is empty on field {}", s, field.name())
+                    }
+                    panic!("Specified Pool '{}' not found on field {}", s, field.name())
+                }
+
                 match options.get("words") {
                     Some(&option_parser::Value::Int(i)) => {
                         return Ok(Value::String(Sentence(i as usize..i as usize).fake()));
@@ -180,7 +251,7 @@ mod tests {
         loader.load_proto_file("proto/person.proto")?;
 
         let message_descriptor = loader.get_message_descriptor("person.Person")?;
-        let faker = ProtoFaker::new();
+        let faker = ProtoFaker::new(vec![]);
 
         let message = faker.generate_dynamic(&loader, &message_descriptor)?;
 
@@ -209,7 +280,7 @@ mod tests {
         let mut loader = ProtoLoader::new();
         loader.load_proto_file("proto/person.proto")?;
 
-        let faker = ProtoFaker::new();
+        let faker = ProtoFaker::new(vec![]);
 
         // Test Person message
         let person_descriptor = loader.get_message_descriptor("person.Person")?;
@@ -230,7 +301,7 @@ mod tests {
         loader.load_proto_file("proto/person.proto")?;
 
         let message_descriptor = loader.get_message_descriptor("person.Person")?;
-        let faker = ProtoFaker::new();
+        let faker = ProtoFaker::new(vec![]);
 
         let message = faker.generate_dynamic(&loader, &message_descriptor)?;
 

@@ -38,6 +38,16 @@ struct Common {
     /// Number of messages to generate
     #[arg(short, long, default_value_t = 1)]
     count: usize,
+
+    #[arg(short, long, value_parser = option_parser::parse_pool_config)]
+    pools: Option<Vec<PoolConfig>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PoolConfig {
+    name: String,
+    items: usize,
+    value: option_parser::ValueType,
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -84,7 +94,7 @@ async fn main() -> Result<()> {
     let message_descriptor = loader.get_message_descriptor(&common.message_type)?;
     println!("Found message type: {}", message_descriptor.full_name());
 
-    let faker = ProtoFaker::new();
+    let faker = ProtoFaker::new(common.pools.clone().unwrap_or(vec![]));
 
     let messages = std::iter::repeat_n((), common.count).map(|_| {
         let message = faker

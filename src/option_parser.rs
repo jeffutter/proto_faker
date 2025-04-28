@@ -1,11 +1,15 @@
 use std::collections::HashMap;
+use winnow::ascii::Caseless;
 use winnow::error::{AddContext, ContextError, ErrMode};
 use winnow::prelude::*;
+use winnow::token::take_until;
 use winnow::{
     ascii::{alphanumeric1, digit1},
     combinator::{alt, delimited, preceded, repeat, separated, separated_pair},
     token::{one_of, take_while},
 };
+
+use crate::PoolConfig;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Value {
@@ -16,6 +20,51 @@ pub enum Value {
     ListStr(Vec<String>),
     ListBool(Vec<bool>),
     Range(i64, i64),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ValueType {
+    I32,
+    I64,
+    U32,
+    U64,
+    F32,
+    F64,
+    String,
+    Bytes,
+    Uuid,
+}
+
+fn parse_value_type(input: &mut &str) -> winnow::error::ModalResult<ValueType> {
+    let e = alt((
+        Caseless("i32"),
+        Caseless("i64"),
+        Caseless("u32"),
+        Caseless("u64"),
+        Caseless("f32"),
+        Caseless("f64"),
+        Caseless("string"),
+        Caseless("bytes"),
+        Caseless("uuid"),
+    ))
+    .parse_next(input)?;
+
+    match e.to_lowercase().as_str() {
+        "i32" => Ok(ValueType::I32),
+        "i64" => Ok(ValueType::I64),
+        "u32" => Ok(ValueType::U32),
+        "u64" => Ok(ValueType::U64),
+        "f32" => Ok(ValueType::F32),
+        "f64" => Ok(ValueType::F64),
+        "string" => Ok(ValueType::String),
+        "bytes" => Ok(ValueType::Bytes),
+        "uuid" => Ok(ValueType::Uuid),
+        _ => Err(ErrMode::Backtrack(ContextError::new().add_context(
+            input,
+            &input.checkpoint(),
+            winnow::error::StrContext::Label("a ValueType"),
+        ))),
+    }
 }
 
 fn key<'i>(input: &mut &'i str) -> winnow::error::ModalResult<&'i str> {
@@ -135,6 +184,22 @@ pub fn parse_options(input: &str) -> HashMap<String, Value> {
     }
 
     result
+}
+
+pub fn parse_pool_config(input: &str) -> anyhow::Result<crate::PoolConfig> {
+    let mut input = input;
+
+    let (name, _, items, _, value) = (
+        take_until(0.., ":").map(str::to_string),
+        ":",
+        digit1.parse_to::<usize>(),
+        ":",
+        parse_value_type,
+    )
+        .parse_next(&mut input)
+        .map_err(|e| anyhow::format_err!("{e}"))?;
+
+    Ok(PoolConfig { name, items, value })
 }
 
 #[cfg(test)]

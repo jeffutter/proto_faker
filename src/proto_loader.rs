@@ -17,9 +17,6 @@ impl ProtoLoader {
 
     /// Load a .proto file from the given path
     pub fn load_proto_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
-        // let proto_source = fs::read_to_string(&path)
-        //     .with_context(|| format!("Failed to read proto file: {:?}", path.as_ref()))?;
-
         // Use protoc to compile the proto file
         let protoc = protoc_bin_vendored::protoc_bin_path()?;
         let include_path = path.as_ref().parent().unwrap_or_else(|| Path::new("."));
@@ -92,9 +89,20 @@ impl ProtoLoader {
                             if let Some(source_code_info) = file.source_code_info {
                                 for location in source_code_info.location.iter() {
                                     if location.path == path {
-                                        if let Some(comment) = &location.leading_comments {
-                                            return Ok(Some(comment.clone()));
-                                        }
+                                        return Ok(location.leading_comments.as_ref().map_or_else(
+                                            || location.trailing_comments.clone(),
+                                            |lead| {
+                                                location.trailing_comments.as_ref().map_or(
+                                                    Some(lead.clone()),
+                                                    |trail| {
+                                                        Some(
+                                                            [lead.to_string(), trail.to_string()]
+                                                                .join(" "),
+                                                        )
+                                                    },
+                                                )
+                                            },
+                                        ));
                                     }
                                 }
                             }
