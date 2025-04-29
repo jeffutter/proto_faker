@@ -138,11 +138,11 @@ fn parse_f64(input: &mut &str) -> winnow::error::ModalResult<f64> {
 fn parse_distribution(input: &mut &str) -> winnow::error::ModalResult<Distribution> {
     let distribution = alt((
         Caseless("uniform").map(|_| Distribution::Uniform),
-        (Caseless("pareto"), "(", parse_f64, ",", parse_f64, "]")
+        (Caseless("pareto"), "(", parse_f64, ",", parse_f64, ")")
             .map(|(_, _, a, _, b, _)| Distribution::Pareto(a, b)),
-        (Caseless("normal"), "(", parse_f64, ",", parse_f64, "]")
+        (Caseless("normal"), "(", parse_f64, ",", parse_f64, ")")
             .map(|(_, _, a, _, b, _)| Distribution::Normal(a, b)),
-        (Caseless("log_normal"), "(", parse_f64, ",", parse_f64, "]")
+        (Caseless("log_normal"), "(", parse_f64, ",", parse_f64, ")")
             .map(|(_, _, a, _, b, _)| Distribution::LogNormal(a, b)),
     ))
     .parse_next(input)?;

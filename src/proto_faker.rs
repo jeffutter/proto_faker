@@ -113,11 +113,14 @@ impl ProtoFaker {
                     }
                     message.set_field(&field, Value::List(values));
                 }
-            } else if rand::random::<f32>() < 0.95 {
-                // 95% chance to populate each non-repeated field
-                let value = self.generate_field_value(&field, &options, loader)?;
-                message.set_field(&field, value);
             }
+            // else if rand::random::<f32>() < 0.95 {
+            //     // 95% chance to populate each non-repeated field
+            //     let value = self.generate_field_value(&field, &options, loader)?;
+            //     message.set_field(&field, value);
+            // }
+            let value = self.generate_field_value(&field, &options, loader)?;
+            message.set_field(&field, value);
         }
 
         Ok(message)
