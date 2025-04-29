@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use winnow::ascii::Caseless;
+use winnow::ascii::{self, Caseless};
 use winnow::error::{AddContext, ContextError, ErrMode};
 use winnow::prelude::*;
 use winnow::token::take_until;
@@ -20,6 +20,7 @@ pub enum Value {
     ListStr(Vec<String>),
     ListBool(Vec<bool>),
     Range(i64, i64),
+    Distribution(Distribution),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -33,6 +34,14 @@ pub enum ValueType {
     String,
     Bytes,
     Uuid,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Distribution {
+    Uniform,
+    Normal(f64, f64),
+    LogNormal(f64, f64),
+    Pareto(f64, f64),
 }
 
 fn parse_value_type(input: &mut &str) -> winnow::error::ModalResult<ValueType> {
@@ -122,6 +131,25 @@ fn parse_range(input: &mut &str) -> winnow::error::ModalResult<Value> {
     )))
 }
 
+fn parse_f64(input: &mut &str) -> winnow::error::ModalResult<f64> {
+    ascii::float.parse_next(input)
+}
+
+fn parse_distribution(input: &mut &str) -> winnow::error::ModalResult<Distribution> {
+    let distribution = alt((
+        Caseless("uniform").map(|_| Distribution::Uniform),
+        (Caseless("pareto"), "(", parse_f64, ",", parse_f64, "]")
+            .map(|(_, _, a, _, b, _)| Distribution::Pareto(a, b)),
+        (Caseless("normal"), "(", parse_f64, ",", parse_f64, "]")
+            .map(|(_, _, a, _, b, _)| Distribution::Normal(a, b)),
+        (Caseless("log_normal"), "(", parse_f64, ",", parse_f64, "]")
+            .map(|(_, _, a, _, b, _)| Distribution::LogNormal(a, b)),
+    ))
+    .parse_next(input)?;
+
+    Ok(distribution)
+}
+
 fn parse_bool(input: &mut &str) -> winnow::error::ModalResult<bool> {
     alt(("true".value(true), "false".value(false))).parse_next(input)
 }
@@ -149,6 +177,7 @@ fn list_value(input: &mut &str) -> winnow::error::ModalResult<Value> {
 
 fn value(input: &mut &str) -> winnow::error::ModalResult<Value> {
     alt((
+        parse_distribution.map(Value::Distribution),
         quoted_string.map(Value::Str),
         list_value,
         parse_bool.map(Value::Bool),
