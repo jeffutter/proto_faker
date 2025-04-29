@@ -1,3 +1,4 @@
+mod distribution;
 mod option_parser;
 mod proto_faker;
 mod proto_loader;

@@ -5,18 +5,15 @@ use fake::faker::lorem::en::Sentence;
 use fake::faker::name::en::Name;
 use fake::faker::phone_number::en::PhoneNumber as FakePhoneNumber;
 use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, Value};
-use rand::Rng;
-use rand::rngs::ThreadRng;
 use rand::seq::IndexedRandom;
-use rand_distr::Distribution as _;
+use rand::{Rng, RngCore};
 use std::collections::HashMap;
-use std::ops::Range;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 use crate::option_parser::parse_options;
 use crate::proto_loader::ProtoLoader;
-use crate::{PoolConfig, option_parser};
+use crate::{PoolConfig, distribution, option_parser};
 
 pub struct ProtoFaker {
     pools: HashMap<String, Vec<Value>>,
@@ -133,45 +130,41 @@ impl ProtoFaker {
         options: &HashMap<String, option_parser::Value>,
         loader: &ProtoLoader,
     ) -> Result<Value> {
-        let mut rng = rand::rng();
-
         let distr = options.get("distribution").and_then(|v| match v {
             option_parser::Value::Distribution(distribution) => Some(distribution),
             _ => None,
         });
 
+        let mut rng: Box<dyn RngCore> = match distr {
+            Some(option_parser::Distribution::Uniform) => Box::new(rand::rng()),
+            Some(option_parser::Distribution::Pareto(scale, shape)) => {
+                Box::new(distribution::ParetoRng::new(rand::rng(), *scale, *shape))
+            }
+            Some(option_parser::Distribution::Normal(scale, shape)) => {
+                Box::new(distribution::NormalRng::new(rand::rng(), *scale, *shape))
+            }
+            Some(option_parser::Distribution::LogNormal(scale, shape)) => {
+                Box::new(distribution::LogNormalRng::new(rand::rng(), *scale, *shape))
+            }
+            None => Box::new(rand::rng()),
+        };
+
         match field.kind() {
-            Kind::Double => Ok(Value::F64(range_rand_with_distribution(
-                &mut rng,
-                distr,
-                -1000.0..1000.0,
-            ))),
-            Kind::Float => Ok(Value::F32(range_rand_with_distribution(
-                &mut rng,
-                distr,
-                -1000.0..1000.0,
-            ))),
-            Kind::Int32 | Kind::Sint32 | Kind::Sfixed32 => Ok(Value::I32(
-                range_rand_with_distribution(&mut rng, distr, -10000..10000),
-            )),
-            Kind::Int64 | Kind::Sint64 | Kind::Sfixed64 => Ok(Value::I64(
-                range_rand_with_distribution(&mut rng, distr, -10000..10000),
-            )),
-            Kind::Uint32 | Kind::Fixed32 => Ok(Value::U32(range_rand_with_distribution(
-                &mut rng,
-                distr,
-                0..20000,
-            ))),
-            Kind::Uint64 | Kind::Fixed64 => Ok(Value::U64(range_rand_with_distribution(
-                &mut rng,
-                distr,
-                0..20000,
-            ))),
+            Kind::Double => Ok(Value::F64(rng.random_range(-1000.0..1000.0))),
+            Kind::Float => Ok(Value::F32(rng.random_range(-1000.0..1000.0))),
+            Kind::Int32 | Kind::Sint32 | Kind::Sfixed32 => {
+                Ok(Value::I32(rng.random_range(-1000..1000)))
+            }
+            Kind::Int64 | Kind::Sint64 | Kind::Sfixed64 => {
+                Ok(Value::I64(rng.random_range(-1000..1000)))
+            }
+            Kind::Uint32 | Kind::Fixed32 => Ok(Value::U32(rng.random_range(0..20000))),
+            Kind::Uint64 | Kind::Fixed64 => Ok(Value::U64(rng.random_range(0..20000))),
             Kind::Bool => Ok(Value::Bool(rng.random_bool(0.5))),
             Kind::String => {
                 if let Some(option_parser::Value::Str(s)) = options.get("pool") {
                     if let Some(pool) = self.pools.get(s) {
-                        if let Some(v) = choose_rand_with_distribution(&mut rng, distr, pool) {
+                        if let Some(v) = pool.choose(&mut rng) {
                             if let Value::String(s) = v {
                                 return Ok(Value::String(s.clone()));
                             }
@@ -188,10 +181,14 @@ impl ProtoFaker {
 
                 match options.get("words") {
                     Some(&option_parser::Value::Int(i)) => {
-                        return Ok(Value::String(Sentence(i as usize..i as usize).fake()));
+                        return Ok(Value::String(
+                            Sentence(i as usize..i as usize).fake_with_rng(&mut rng),
+                        ));
                     }
                     Some(&option_parser::Value::Range(s, e)) => {
-                        return Ok(Value::String(Sentence(s as usize..e as usize).fake()));
+                        return Ok(Value::String(
+                            Sentence(s as usize..e as usize).fake_with_rng(&mut rng),
+                        ));
                     }
                     Some(option_parser::Value::ListStr(l)) => {
                         return Ok(Value::String(l.choose(&mut rng).unwrap().clone()));
@@ -207,16 +204,18 @@ impl ProtoFaker {
                     || field_name == "uuid"
                     || field_name == "id"
                 {
-                    return Ok(Value::String(fake::uuid::UUIDv4.fake()));
+                    return Ok(Value::String(fake::uuid::UUIDv4.fake_with_rng(&mut rng)));
                 }
 
                 match field_name {
-                    s if s.contains("name") => Ok(Value::String(Name().fake())),
-                    s if s.contains("email") => Ok(Value::String(SafeEmail().fake())),
-                    s if s.contains("phone") || s.contains("number") => {
-                        Ok(Value::String(FakePhoneNumber().fake()))
+                    s if s.contains("name") => Ok(Value::String(Name().fake_with_rng(&mut rng))),
+                    s if s.contains("email") => {
+                        Ok(Value::String(SafeEmail().fake_with_rng(&mut rng)))
                     }
-                    _ => Ok(Value::String(Sentence(1..3).fake())),
+                    s if s.contains("phone") || s.contains("number") => {
+                        Ok(Value::String(FakePhoneNumber().fake_with_rng(&mut rng)))
+                    }
+                    _ => Ok(Value::String(Sentence(1..3).fake_with_rng(&mut rng))),
                 }
             }
             Kind::Bytes => {
@@ -261,212 +260,6 @@ impl ProtoFaker {
     }
 }
 
-fn choose_rand_with_distribution<'a, T>(
-    rng: &mut ThreadRng,
-    distr: Option<&option_parser::Distribution>,
-    list: &'a [T],
-) -> Option<&'a T> {
-    if list.is_empty() {
-        return None;
-    }
-
-    match distr {
-        Some(option_parser::Distribution::Uniform) => list.choose(rng),
-        Some(option_parser::Distribution::Normal(mean, std_dev)) => {
-            let len = list.len();
-            let mean = (len - 1) as f64 / mean;
-            let std_dev = (len as f64) / std_dev; // You can adjust this factor!
-
-            let normal = rand_distr::Normal::new(mean, std_dev).unwrap();
-
-            let mut sample = normal.sample(rng);
-
-            // Normalize sample to [0, 1)
-            sample = sample / (sample + 1.0);
-
-            // Now map [0,1) to [0,len)
-            let idx = (sample * list.len() as f64) as usize;
-            let idx = idx.min(list.len() - 1); // Just in case sample == 1.0 exactly
-
-            list.get(idx)
-        }
-        Some(option_parser::Distribution::LogNormal(mean, std_dev)) => {
-            let lognormal = rand_distr::LogNormal::new(*mean, *std_dev).unwrap();
-
-            let mut sample = lognormal.sample(rng);
-
-            // Normalize sample to [0, 1)
-            sample = sample / (sample + 1.0);
-
-            // Now map [0,1) to [0,len)
-            let idx = (sample * list.len() as f64) as usize;
-            let idx = idx.min(list.len() - 1); // Just in case sample == 1.0 exactly
-
-            list.get(idx)
-        }
-        Some(option_parser::Distribution::Pareto(scale, shape)) => {
-            let pareto = rand_distr::Pareto::new(*scale, *shape).unwrap();
-
-            let sample = pareto.sample(rng);
-
-            // Convert it into an index: we can invert larger samples into smaller indices
-            // (so lower indices are more probable if that's your intent).
-            // Normalize sample by scale
-            let normalized = sample / scale;
-
-            // Map normalized value into an index
-            let p = (1.0 / normalized).min(1.0); // Inverse + clamp to 1
-            let idx = (p * (list.len() as f64)) as usize;
-
-            // Clamp the index in case of rounding
-            let idx = idx.min(list.len() - 1);
-
-            list.get(idx)
-        }
-        None => list.choose(rng),
-    }
-}
-
-fn range_rand_with_distribution<T>(
-    rng: &mut ThreadRng,
-    distr: Option<&option_parser::Distribution>,
-    range: Range<T>,
-) -> T
-where
-    T: Copy + PartialOrd + FromF64 + IntoF64 + rand_distr::uniform::SampleUniform,
-{
-    let start_f64 = to_f64(range.start);
-    let end_f64 = to_f64(range.end);
-    let len_f64 = end_f64 - start_f64;
-
-    match distr {
-        Some(option_parser::Distribution::Uniform) => rng.random_range(range),
-        Some(option_parser::Distribution::Normal(mean, std_dev)) => {
-            let mean = len_f64 / mean;
-            let std_dev = len_f64 / std_dev;
-
-            let normal = rand_distr::Normal::new(mean, std_dev).unwrap();
-            let mut sample = normal.sample(rng);
-
-            // Normalize to [0, 1)
-            sample = sample / (sample + 1.0);
-
-            // Scale to range
-            let val = start_f64 + (sample * len_f64);
-            T::from_f64(val)
-        }
-        Some(option_parser::Distribution::LogNormal(mean, std_dev)) => {
-            let lognormal = rand_distr::LogNormal::new(*mean, *std_dev).unwrap();
-            let mut sample = lognormal.sample(rng);
-
-            sample = sample / (sample + 1.0);
-
-            let val = start_f64 + (sample * len_f64);
-            T::from_f64(val)
-        }
-        Some(option_parser::Distribution::Pareto(scale, shape)) => {
-            let pareto = rand_distr::Pareto::new(*scale, *shape).unwrap();
-            let sample = pareto.sample(rng);
-
-            let normalized = sample / scale;
-            let p = (1.0 / normalized).min(1.0);
-
-            let val = start_f64 + (p * len_f64);
-            T::from_f64(val)
-        }
-        None => rng.random_range(range),
-    }
-}
-
-// Helper: Always convert T -> f64
-fn to_f64<T: IntoF64>(val: T) -> f64 {
-    val.into_f64()
-}
-
-/// A trait to unify "convert into f64" for different types
-pub trait IntoF64 {
-    fn into_f64(self) -> f64;
-}
-
-/// A trait to unify "convert from f64" for different types
-pub trait FromF64 {
-    fn from_f64(val: f64) -> Self;
-}
-
-// Implement for common types
-impl IntoF64 for f32 {
-    fn into_f64(self) -> f64 {
-        self as f64
-    }
-}
-impl IntoF64 for f64 {
-    fn into_f64(self) -> f64 {
-        self
-    }
-}
-impl IntoF64 for u32 {
-    fn into_f64(self) -> f64 {
-        self as f64
-    }
-}
-impl IntoF64 for u64 {
-    fn into_f64(self) -> f64 {
-        self as f64
-    }
-}
-impl IntoF64 for usize {
-    fn into_f64(self) -> f64 {
-        self as f64
-    }
-}
-impl IntoF64 for i32 {
-    fn into_f64(self) -> f64 {
-        self as f64
-    }
-}
-impl IntoF64 for i64 {
-    fn into_f64(self) -> f64 {
-        self as f64
-    }
-}
-
-// Implement FromF64 for common types
-impl FromF64 for f32 {
-    fn from_f64(val: f64) -> Self {
-        val as f32
-    }
-}
-impl FromF64 for f64 {
-    fn from_f64(val: f64) -> Self {
-        val
-    }
-}
-impl FromF64 for u32 {
-    fn from_f64(val: f64) -> Self {
-        val.round().max(0.0) as u32
-    }
-}
-impl FromF64 for u64 {
-    fn from_f64(val: f64) -> Self {
-        val.round().max(0.0) as u64
-    }
-}
-impl FromF64 for usize {
-    fn from_f64(val: f64) -> Self {
-        val.round().max(0.0) as usize
-    }
-}
-impl FromF64 for i32 {
-    fn from_f64(val: f64) -> Self {
-        val.round() as i32
-    }
-}
-impl FromF64 for i64 {
-    fn from_f64(val: f64) -> Self {
-        val.round() as i64
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
@@ -481,7 +274,11 @@ mod tests {
         loader.load_proto_file("proto/person.proto")?;
 
         let message_descriptor = loader.get_message_descriptor("person.Person")?;
-        let faker = ProtoFaker::new(vec![]);
+        let faker = ProtoFaker::new(vec![PoolConfig {
+            name: String::from("user_id"),
+            items: 20,
+            value: option_parser::ValueType::Uuid,
+        }]);
 
         let message = faker.generate_dynamic(&loader, &message_descriptor)?;
 
@@ -510,7 +307,11 @@ mod tests {
         let mut loader = ProtoLoader::new();
         loader.load_proto_file("proto/person.proto")?;
 
-        let faker = ProtoFaker::new(vec![]);
+        let faker = ProtoFaker::new(vec![PoolConfig {
+            name: String::from("user_id"),
+            items: 20,
+            value: option_parser::ValueType::Uuid,
+        }]);
 
         // Test Person message
         let person_descriptor = loader.get_message_descriptor("person.Person")?;
@@ -531,7 +332,11 @@ mod tests {
         loader.load_proto_file("proto/person.proto")?;
 
         let message_descriptor = loader.get_message_descriptor("person.Person")?;
-        let faker = ProtoFaker::new(vec![]);
+        let faker = ProtoFaker::new(vec![PoolConfig {
+            name: String::from("user_id"),
+            items: 20,
+            value: option_parser::ValueType::Uuid,
+        }]);
 
         let message = faker.generate_dynamic(&loader, &message_descriptor)?;
 
