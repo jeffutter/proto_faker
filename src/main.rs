@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use prost_reflect::prost::Message;
-use prost_reflect::{DynamicMessage, ReflectMessage, Value};
+use prost_reflect::{DynamicMessage, MessageDescriptor, ReflectMessage, Value};
 use proto_faker::ProtoFaker;
 use proto_loader::ProtoLoader;
 use rdkafka::config::ClientConfig;
@@ -166,7 +166,7 @@ async fn main() -> Result<()> {
                 println!("Decoded message:");
                 for field in message_descriptor.fields() {
                     let value = decoded.get_field(&field);
-                    print_field_value(field.name(), &value, 2);
+                    print_field_value(&message_descriptor, field.name(), &value, 2);
                 }
             }
         }
@@ -212,7 +212,12 @@ async fn publish_to_kafka(
     Ok(())
 }
 
-fn print_field_value(name: &str, value: &Value, indent: usize) {
+fn print_field_value(
+    message_descriptor: &MessageDescriptor,
+    name: &str,
+    value: &Value,
+    indent: usize,
+) {
     let indent_str = " ".repeat(indent);
 
     match value {
@@ -220,14 +225,29 @@ fn print_field_value(name: &str, value: &Value, indent: usize) {
             println!("{}{}:", indent_str, name);
             for field in msg.descriptor().fields() {
                 let field_value = msg.get_field(&field);
-                print_field_value(field.name(), &field_value, indent + 2);
+                print_field_value(&msg.descriptor(), field.name(), &field_value, indent + 2);
             }
         }
         Value::List(values) => {
             println!("{}{}:", indent_str, name);
             for (i, val) in values.iter().enumerate() {
-                print_field_value(&format!("[{}]", i), val, indent + 2);
+                print_field_value(message_descriptor, &format!("[{}]", i), val, indent + 2);
             }
+        }
+        Value::EnumNumber(value) => {
+            if let Some(field) = message_descriptor.fields().find(|f| f.name() == name) {
+                // Check if this field is an enum type
+                if let prost_reflect::Kind::Enum(enum_descriptor) = field.kind() {
+                    if let Some(enum_value) =
+                        enum_descriptor.values().find(|v| v.number() == *value)
+                    {
+                        println!("{}{}: {} ({})", indent_str, name, enum_value.name(), value);
+                        return;
+                    }
+                }
+            }
+            // Fallback if we can't find the enum descriptor or value
+            println!("{}{}: ENUM_VALUE ({})", indent_str, name, value);
         }
         _ => println!("{}{}: {:?}", indent_str, name, value),
     }
