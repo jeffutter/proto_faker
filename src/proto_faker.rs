@@ -85,7 +85,27 @@ impl ProtoFaker {
         let mut message = DynamicMessage::new(message_descriptor.clone());
         let mut rng = rand::rng();
 
+        // Group fields by oneof name
+        let mut oneof_fields: HashMap<String, Vec<FieldDescriptor>> = HashMap::new();
+
+        // Collect all oneofs in the message
+        for oneof in message_descriptor.oneofs() {
+            let oneof_name = oneof.name().to_string();
+            let fields: Vec<FieldDescriptor> = oneof.fields().collect();
+            if !fields.is_empty() {
+                oneof_fields.insert(oneof_name, fields);
+            }
+        }
+
         for field in message_descriptor.fields() {
+            // Skip oneof fields - we'll handle them separately
+            if message_descriptor
+                .oneofs()
+                .any(|oneof| oneof.fields().any(|f| f.name() == field.name()))
+            {
+                continue;
+            }
+
             let comment = loader.get_comment(
                 message_descriptor.parent_file().name(),
                 message_descriptor.name(),
@@ -113,14 +133,30 @@ impl ProtoFaker {
                     }
                     message.set_field(&field, Value::List(values));
                 }
+            } else {
+                let value = self.generate_field_value(&field, &options, loader)?;
+                message.set_field(&field, value);
             }
-            // else if rand::random::<f32>() < 0.95 {
-            //     // 95% chance to populate each non-repeated field
-            //     let value = self.generate_field_value(&field, &options, loader)?;
-            //     message.set_field(&field, value);
-            // }
-            let value = self.generate_field_value(&field, &options, loader)?;
-            message.set_field(&field, value);
+        }
+
+        // Handle oneof fields
+        for (_, fields) in oneof_fields {
+            if !fields.is_empty() {
+                // Randomly select one field from the oneof group
+                let idx = rng.random_range(0..fields.len());
+                let selected_field = &fields[idx];
+
+                let comment = loader.get_comment(
+                    message_descriptor.parent_file().name(),
+                    message_descriptor.name(),
+                    selected_field.name(),
+                )?;
+
+                let options = comment.map(|p| parse_options(&p)).unwrap_or(HashMap::new());
+
+                let value = self.generate_field_value(selected_field, &options, loader)?;
+                message.set_field(selected_field, value);
+            }
         }
 
         Ok(message)
@@ -376,6 +412,53 @@ mod tests {
             );
         } else {
             panic!("No phones");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_oneof_fields() -> Result<()> {
+        let mut loader = ProtoLoader::new();
+        loader.load_proto_file("proto/person.proto")?;
+
+        let message_descriptor = loader.get_message_descriptor("person.Person")?;
+        let faker = ProtoFaker::new(vec![PoolConfig {
+            name: String::from("user_id"),
+            items: 20,
+            value: option_parser::ValueType::Uuid,
+        }]);
+
+        // Generate multiple messages to ensure oneof fields are properly handled
+        for _ in 0..10 {
+            let message = faker.generate_dynamic(&loader, &message_descriptor)?;
+
+            // Check that exactly one of the oneof fields is set
+            let engineer = message.get_field_by_name("engineer");
+            let manager = message.get_field_by_name("manager");
+
+            let engineer = engineer.unwrap();
+            let manager = manager.unwrap();
+            let e_age = engineer
+                .as_message()
+                .unwrap()
+                .get_field_by_name("age")
+                .unwrap()
+                .as_i32()
+                .unwrap();
+            let m_age = manager
+                .as_message()
+                .unwrap()
+                .get_field_by_name("age")
+                .unwrap()
+                .as_i32()
+                .unwrap();
+
+            // Either engineer or manager should be set, but not both
+            assert!(
+                (e_age != 0) ^ (m_age != 0), // XOR operator ensures exactly one is true
+                "Oneof field should have exactly one value set"
+            );
         }
 
         Ok(())
