@@ -3,8 +3,7 @@ mod option_parser;
 mod proto_faker;
 mod proto_loader;
 
-use anyhow::{Context, Result};
-use bytes::Bytes;
+use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
 use prost_reflect::prost::Message;
 use prost_reflect::{DynamicMessage, MessageDescriptor, ReflectMessage, Value};
@@ -26,7 +25,7 @@ struct Args {
     cmd: Commands,
 }
 
-#[derive(clap::Args, Debug, PartialEq)]
+#[derive(clap::Args, Debug, PartialEq, Clone)]
 struct Common {
     /// Path to the .proto file
     #[arg(short = 'f', long)]
@@ -42,6 +41,10 @@ struct Common {
 
     #[arg(short, long, value_parser = option_parser::parse_pool_config)]
     pools: Option<Vec<PoolConfig>>,
+
+    /// Kafka key field (default: 'id')
+    #[arg(short, long)]
+    key: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -98,11 +101,9 @@ async fn main() -> Result<()> {
     let faker = ProtoFaker::new(common.pools.clone().unwrap_or(vec![]));
 
     let messages = std::iter::repeat_n((), common.count).map(|_| {
-        let message = faker
+        faker
             .generate_dynamic(&loader, &message_descriptor)
-            .unwrap();
-
-        message.encode_to_vec()
+            .unwrap()
     });
 
     match args.cmd {
@@ -124,7 +125,8 @@ async fn main() -> Result<()> {
                 name: Some(message_descriptor.full_name().to_string()),
                 schema_type:
                     schema_registry_converter::schema_registry_common::SchemaType::Protobuf,
-                schema: fs::read_to_string(common.proto_file).context("Can't read proto file")?,
+                schema: fs::read_to_string(common.proto_file.clone())
+                    .context("Can't read proto file")?,
                 references: vec![],
             };
 
@@ -138,34 +140,28 @@ async fn main() -> Result<()> {
 
             let encoder = ProtoRawEncoder::new(sr_settings);
 
-            let fs = messages.into_iter().enumerate().map(|(i, encoded)| {
-                let encoded = encoded.clone();
-
+            let fs = messages.into_iter().map(|message| {
                 publish_to_kafka(
                     &producer,
                     &encoder,
                     &topic,
                     message_descriptor.full_name(),
-                    encoded,
-                    i,
+                    message,
+                    &message_descriptor,
+                    &common,
                 )
             });
 
             futures::future::try_join_all(fs).await?;
         }
         Commands::Print { common } => {
-            for (i, encoded) in messages.enumerate() {
+            for (i, message) in messages.enumerate() {
                 if common.count > 1 {
                     println!("\n--- Message {} ---", i + 1);
                 }
-                let decoded = DynamicMessage::decode(
-                    message_descriptor.clone(),
-                    Bytes::from(encoded.clone()),
-                )?;
 
-                println!("Decoded message:");
                 for field in message_descriptor.fields() {
-                    let value = decoded.get_field(&field);
+                    let value = message.get_field(&field);
                     print_field_value(&message_descriptor, field.name(), &value, 2);
                 }
             }
@@ -180,19 +176,39 @@ async fn publish_to_kafka(
     encoder: &ProtoRawEncoder<'_>,
     topic: &str,
     schema_name: &str,
-    payload: Vec<u8>,
-    message_index: usize,
+    message: DynamicMessage,
+    message_descriptor: &MessageDescriptor,
+    common: &Common,
 ) -> Result<()> {
-    // Create a subject name strategy for the schema registry
-    let subject_name_strategy = SubjectNameStrategy::RecordNameStrategy(schema_name.to_string());
+    // Determine the key field
+    let key_field = common.key.as_deref().unwrap_or("id");
+
+    // Find the field descriptor for the key field
+    let field_desc = message_descriptor
+        .fields()
+        .find(|f| f.name() == key_field)
+        .ok_or_else(|| anyhow!("Key field '{}' not found in message", key_field))?;
+
+    // Extract the key value from the message
+    let key_value = message.get_field(&field_desc);
+
+    let key = match key_value.as_ref() {
+        Value::String(s) => s.clone(),
+        Value::I32(i) => i.to_string(),
+        Value::I64(i) => i.to_string(),
+        Value::Bool(b) => b.to_string(),
+        _ => return Err(anyhow!("Unsupported key type: {:?}", key_value)),
+    };
 
     // Encode the message with the schema registry
     let encoded_payload = encoder
-        .encode(&payload, schema_name, subject_name_strategy)
+        .encode(
+            &message.encode_to_vec(),
+            schema_name,
+            SubjectNameStrategy::RecordNameStrategy(schema_name.to_string()),
+        )
         .await
         .context("Failed to encode message with schema registry")?;
-
-    let key = format!("key-{}", message_index);
 
     // Create a record to send
     let record = FutureRecord::to(topic).payload(&encoded_payload).key(&key);
