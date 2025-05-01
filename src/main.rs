@@ -41,10 +41,6 @@ struct Common {
 
     #[arg(short, long, value_parser = option_parser::parse_pool_config)]
     pools: Option<Vec<PoolConfig>>,
-
-    /// Kafka key field (default: 'id')
-    #[arg(short, long)]
-    key: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -75,6 +71,10 @@ enum Commands {
         /// Schema registry URL (required if publish is set)
         #[arg(short, long)]
         schema_registry: String,
+
+        /// Kafka key field (default: 'id')
+        #[arg(short, long)]
+        key: Option<String>,
     },
 }
 
@@ -112,6 +112,7 @@ async fn main() -> Result<()> {
             topic,
             schema_registry,
             common,
+            key,
         } => {
             let producer = ClientConfig::new()
                 .set("bootstrap.servers", broker)
@@ -140,6 +141,9 @@ async fn main() -> Result<()> {
 
             let encoder = ProtoRawEncoder::new(sr_settings);
 
+            // Determine the key field
+            let key_field = key.as_deref().unwrap_or("id");
+
             let fs = messages.into_iter().map(|message| {
                 publish_to_kafka(
                     &producer,
@@ -148,7 +152,7 @@ async fn main() -> Result<()> {
                     message_descriptor.full_name(),
                     message,
                     &message_descriptor,
-                    &common,
+                    key_field,
                 )
             });
 
@@ -178,11 +182,8 @@ async fn publish_to_kafka(
     schema_name: &str,
     message: DynamicMessage,
     message_descriptor: &MessageDescriptor,
-    common: &Common,
+    key_field: &str,
 ) -> Result<()> {
-    // Determine the key field
-    let key_field = common.key.as_deref().unwrap_or("id");
-
     // Find the field descriptor for the key field
     let field_desc = message_descriptor
         .fields()

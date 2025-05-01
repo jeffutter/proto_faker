@@ -1,10 +1,10 @@
 # Proto Faker
 
-A command-line tool for generating random protobuf messages based on .proto schema definitions. Proto Faker can generate realistic test data and publish it to Kafka topics with schema registry integration.
+A command-line tool for generating fake protobuf messages based on .proto schema definitions. Proto Faker can generate realistic test data and publish it to Kafka topics with schema registry integration.
 
 ## Features
 
-- Generate random protobuf messages from .proto schema files
+- Generate fake protobuf messages from .proto schema files
 - Print messages to stdout or publish to Kafka topics
 - Schema registry integration for Kafka publishing
 - Customizable field generation via proto comments
@@ -29,7 +29,6 @@ proto-faker [OPTIONS] <COMMAND>
 -m, --message-type <MESSAGE_TYPE>    Message type to generate (fully qualified name)
 -c, --count <COUNT>    Number of messages to generate [default: 1]
 -p, --pools <POOLS>    Define value pools for consistent data generation
--k, --key <KEY>    Kafka key field (default: 'id')
 ```
 
 ### Publish Options
@@ -38,6 +37,7 @@ proto-faker [OPTIONS] <COMMAND>
 -b, --broker <BROKER>    Kafka broker address
 -t, --topic <TOPIC>    Kafka topic to publish to
 -s, --schema-registry <SCHEMA_REGISTRY>    Schema registry URL
+-k, --key <KEY>    Kafka key field (default: 'id')
 ```
 
 ### Pool Configuration
@@ -66,16 +66,16 @@ Field generation can be customized using comments in the .proto file:
 message Person {
   // words=1..3
   string name = 1;
-  
+
   // string=uuid
   string id = 2;
-  
-  // count=1..5 
+
+  // count=1..5
   repeated string tags = 3;
-  
+
   // pool=user_ids
   string user_id = 4;
-  
+
   // distribution=normal(0,1)
   double score = 5;
 }
