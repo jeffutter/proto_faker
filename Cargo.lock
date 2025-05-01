@@ -1252,7 +1252,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "proto_fake"
+name = "proto_faker"
 version = "0.1.0"
 dependencies = [
  "anyhow",
