@@ -15,8 +15,10 @@ use schema_registry_converter::async_impl::proto_raw::ProtoRawEncoder;
 use schema_registry_converter::async_impl::schema_registry::{self, SrSettings};
 use schema_registry_converter::schema_registry_common::{SubjectNameStrategy, SuppliedSchema};
 use std::fs;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::time::Duration;
+use zstd::stream::Encoder;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Generate random protobuf messages")]
@@ -76,6 +78,14 @@ enum Commands {
         #[arg(short, long)]
         key: Option<String>,
     },
+    Write {
+        #[command(flatten)]
+        common: Common,
+
+        /// Output zip file path
+        #[arg(short, long)]
+        output: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -84,6 +94,7 @@ async fn main() -> Result<()> {
     let common = match &args.cmd {
         Commands::Print { common } => common,
         Commands::Publish { common, .. } => common,
+        Commands::Write { common, .. } => common,
     };
 
     println!("Loading proto file: {}", common.proto_file.display());
@@ -170,6 +181,15 @@ async fn main() -> Result<()> {
                 }
             }
         }
+        Commands::Write { common, output } => {
+            println!("Writing messages to tar.zst file: {}", output.display());
+            write_to_tar_zstd_file(&loader, messages.collect::<Vec<_>>(), &output)?;
+            println!(
+                "Successfully wrote {} messages to {}",
+                common.count,
+                output.display()
+            );
+        }
     }
 
     Ok(())
@@ -225,6 +245,36 @@ async fn publish_to_kafka(
         "Message published to topic {} at partition {} with offset {}",
         topic, delivery_status.0, delivery_status.1
     );
+
+    Ok(())
+}
+
+fn write_to_tar_zstd_file(
+    loader: &ProtoLoader,
+    messages: Vec<DynamicMessage>,
+    output_path: &PathBuf,
+) -> Result<()> {
+    // Create a new file for the compressed tar archive
+    let file = fs::File::create(output_path).context("Failed to create output file")?;
+
+    // Create a zstd encoder with default compression level
+    let encoder = Encoder::new(file, 3)?;
+    let mut writer = BufWriter::new(encoder);
+
+    let file_descriptor_set = loader.serialize_pool();
+    let file_descriptor_set_len = file_descriptor_set.len() as u32;
+
+    writer.write_all(&file_descriptor_set_len.to_le_bytes())?;
+    writer.write_all(&file_descriptor_set)?;
+
+    // Encode each message with length delimiter and write to the buffer
+    for message in messages {
+        let mut message_buffer = Vec::new();
+        prost::Message::encode_length_delimited(&message, &mut message_buffer)?;
+        writer.write_all(&message_buffer)?;
+    }
+
+    writer.flush()?;
 
     Ok(())
 }

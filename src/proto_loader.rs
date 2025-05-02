@@ -64,6 +64,10 @@ impl ProtoLoader {
             .with_context(|| format!("File not found: {}", file_name))
     }
 
+    pub fn serialize_pool(&self) -> Vec<u8> {
+        self.pool.encode_to_vec()
+    }
+
     pub fn get_comment(
         &self,
         file_name: &str,

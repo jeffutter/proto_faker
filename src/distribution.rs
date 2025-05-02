@@ -109,4 +109,3 @@ macro_rules! impl_biased_rng {
 impl_biased_rng!(ParetoRng<R>);
 impl_biased_rng!(NormalRng<R>);
 impl_biased_rng!(LogNormalRng<R>);
-

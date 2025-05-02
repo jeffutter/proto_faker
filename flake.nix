@@ -34,6 +34,7 @@
           { }
           // (lib.attrsets.optionalAttrs pkgs.stdenv.isLinux {
             RUSTFLAGS = "-Clinker=clang -Clink-arg=--ld-path=${pkgs.mold}/bin/mold";
+            LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.openssl ];
           });
 
         commonArgs = (
