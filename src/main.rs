@@ -15,7 +15,7 @@ use schema_registry_converter::async_impl::proto_raw::ProtoRawEncoder;
 use schema_registry_converter::async_impl::schema_registry::{self, SrSettings};
 use schema_registry_converter::schema_registry_common::{SubjectNameStrategy, SuppliedSchema};
 use std::fs;
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 use zstd::stream::Encoder;
@@ -182,8 +182,8 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Write { common, output } => {
-            println!("Writing messages to tar.zst file: {}", output.display());
-            write_to_tar_zstd_file(&loader, messages.collect::<Vec<_>>(), &output)?;
+            println!("Writing messages to zst file: {}", output.display());
+            write_to_zstd_file(&loader, messages, &output)?;
             println!(
                 "Successfully wrote {} messages to {}",
                 common.count,
@@ -249,31 +249,36 @@ async fn publish_to_kafka(
     Ok(())
 }
 
-fn write_to_tar_zstd_file(
+fn write_to_zstd_file(
     loader: &ProtoLoader,
-    messages: Vec<DynamicMessage>,
+    messages: impl Iterator<Item = DynamicMessage>,
     output_path: &PathBuf,
 ) -> Result<()> {
-    // Create a new file for the compressed tar archive
+    // Create a new file for the compressed output
     let file = fs::File::create(output_path).context("Failed to create output file")?;
 
     // Create a zstd encoder with default compression level
-    let encoder = Encoder::new(file, 3)?;
-    let mut writer = BufWriter::new(encoder);
+    let mut encoder = Encoder::new(file, 3)?;
 
     let file_descriptor_set = loader.serialize_pool();
     let file_descriptor_set_len = file_descriptor_set.len() as u32;
 
-    writer.write_all(&file_descriptor_set_len.to_le_bytes())?;
-    writer.write_all(&file_descriptor_set)?;
+    encoder.write_all(&file_descriptor_set_len.to_le_bytes())?;
+    encoder.write_all(&file_descriptor_set)?;
 
     // Encode each message with length delimiter and write to the buffer
+    let mut c = 0;
     for message in messages {
-        let mut message_buffer = Vec::new();
-        prost::Message::encode_length_delimited(&message, &mut message_buffer)?;
-        writer.write_all(&message_buffer)?;
+        let bytes = message.encode_to_vec();
+        let len = bytes.len() as u32;
+        let len_bytes = len.to_le_bytes();
+        encoder.write_all(&len_bytes)?;
+        encoder.write_all(&bytes)?;
+        c += 1;
     }
+    println!("Written: {} messages", c);
 
+    let mut writer = encoder.finish()?;
     writer.flush()?;
 
     Ok(())
