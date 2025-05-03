@@ -56,7 +56,7 @@
               zlib
               zstd
             ];
-            buildInputs = with pkgs; [ ] ++ lib.optionals stdenv.isDarwin [ libiconv ];
+            buildInputs = with pkgs; [ ] ++ lib.optionals stdenv.isDarwin [ Security libiconv ];
           }
           // envVars
         );
