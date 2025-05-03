@@ -41,16 +41,20 @@
           {
             inherit src;
             nativeBuildInputs = with pkgs; [
-              rust-bin.stable.latest.default
               cargo
               clang
-              rust-analyzer
-              rustc
-              rdkafka
-              protobuf
-              pkg-config
               cmake
+              cyrus_sasl
+              lz4
               openssl
+              pkg-config
+              protobuf
+              rdkafka
+              rust-analyzer
+              rust-bin.stable.latest.default
+              rustc
+              zlib
+              zstd
             ];
             buildInputs = with pkgs; [ ] ++ lib.optionals stdenv.isDarwin [ libiconv ];
           }
