@@ -34,7 +34,6 @@
           { }
           // (lib.attrsets.optionalAttrs pkgs.stdenv.isLinux {
             RUSTFLAGS = "-Clinker=clang -Clink-arg=--ld-path=${pkgs.mold}/bin/mold";
-            LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.openssl ];
           });
 
         commonArgs = (
@@ -44,9 +43,9 @@
               cargo
               clang
               cmake
-              cyrus_sasl
               lz4
               openssl
+              perl
               pkg-config
               protobuf
               rdkafka
@@ -56,7 +55,7 @@
               zlib
               zstd
             ];
-            buildInputs = with pkgs; [ ] ++ lib.optionals stdenv.isDarwin [ Security libiconv ];
+            buildInputs = with pkgs; [ ] ++ lib.optionals stdenv.isDarwin [ libiconv ];
           }
           // envVars
         );
@@ -120,19 +119,20 @@
         devShells.default = mkShell (
           {
             packages = [
-              rust-bin.stable.latest.default
               cargo
               cargo-watch
+              cmake
+              confluent-platform
+              kcat
+              openssl
+              perl
+              pkg-config
+              protobuf
+              rdkafka
               rust-analyzer
+              rust-bin.stable.latest.default
               rustc
               rustfmt
-              confluent-platform
-              rdkafka
-              pkg-config
-              cmake
-              openssl
-              protobuf
-              kcat
               (pkgs.writeShellScriptBin "start-kafka" ''
                 #!/bin/bash
 
