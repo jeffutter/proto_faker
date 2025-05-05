@@ -15,7 +15,7 @@ use schema_registry_converter::async_impl::proto_raw::ProtoRawEncoder;
 use schema_registry_converter::async_impl::schema_registry::{self, SrSettings};
 use schema_registry_converter::schema_registry_common::{SubjectNameStrategy, SuppliedSchema};
 use std::fs;
-use std::io::Write;
+use std::io::{Seek, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 use zstd::stream::Encoder;
@@ -43,6 +43,10 @@ struct Common {
 
     #[arg(short, long, value_parser = option_parser::parse_pool_config)]
     pools: Option<Vec<PoolConfig>>,
+
+    /// Kafka key field (default: 'id')
+    #[arg(short, long)]
+    key: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -73,10 +77,6 @@ enum Commands {
         /// Schema registry URL (required if publish is set)
         #[arg(short, long)]
         schema_registry: String,
-
-        /// Kafka key field (default: 'id')
-        #[arg(short, long)]
-        key: Option<String>,
     },
     Write {
         #[command(flatten)]
@@ -123,7 +123,6 @@ async fn main() -> Result<()> {
             topic,
             schema_registry,
             common,
-            key,
         } => {
             let producer = ClientConfig::new()
                 .set("bootstrap.servers", broker)
@@ -153,7 +152,7 @@ async fn main() -> Result<()> {
             let encoder = ProtoRawEncoder::new(sr_settings);
 
             // Determine the key field
-            let key_field = key.as_deref().unwrap_or("id");
+            let key_field = common.key.as_deref().unwrap_or("id");
 
             let fs = messages.into_iter().map(|message| {
                 publish_to_kafka(
@@ -183,7 +182,10 @@ async fn main() -> Result<()> {
         }
         Commands::Write { common, output } => {
             println!("Writing messages to zst file: {}", output.display());
-            write_to_zstd_file(&loader, messages, &output)?;
+            // Determine the key field
+            let key_field = common.key.as_deref().unwrap_or("id");
+
+            write_to_zstd_file(&loader, key_field, messages, &message_descriptor, &output)?;
             println!(
                 "Successfully wrote {} messages to {}",
                 common.count,
@@ -251,11 +253,16 @@ async fn publish_to_kafka(
 
 fn write_to_zstd_file(
     loader: &ProtoLoader,
+    key_field: &str,
     messages: impl Iterator<Item = DynamicMessage>,
+    message_descriptor: &MessageDescriptor,
     output_path: &PathBuf,
 ) -> Result<()> {
     // Create a new file for the compressed output
-    let file = fs::File::create(output_path).context("Failed to create output file")?;
+    let mut file = fs::File::create(output_path).context("Failed to create output file")?;
+
+    // Write empty u32 for number of messages
+    file.write_all(&[0u8; 4])?;
 
     // Create a zstd encoder with default compression level
     let mut encoder = Encoder::new(file, 3)?;
@@ -266,19 +273,50 @@ fn write_to_zstd_file(
     encoder.write_all(&file_descriptor_set_len.to_le_bytes())?;
     encoder.write_all(&file_descriptor_set)?;
 
+    // Find the field descriptor for the key field
+    let field_desc = message_descriptor
+        .fields()
+        .find(|f| f.name() == key_field)
+        .ok_or_else(|| anyhow!("Key field '{}' not found in message", key_field))?;
+
     // Encode each message with length delimiter and write to the buffer
-    let mut c = 0;
+    let mut c: u32 = 0;
     for message in messages {
+        // Extract the key value from the message
+        let key_value = message.get_field(&field_desc);
+
+        let key = match key_value.as_ref() {
+            Value::String(s) => s.clone(),
+            Value::I32(i) => i.to_string(),
+            Value::I64(i) => i.to_string(),
+            Value::Bool(b) => b.to_string(),
+            _ => return Err(anyhow!("Unsupported key type: {:?}", key_value)),
+        };
+
+        let key_bytes = key.as_bytes();
+        let key_len = key_bytes.len() as u32;
+        let key_len_bytes = key_len.to_le_bytes();
+
         let bytes = message.encode_to_vec();
         let len = bytes.len() as u32;
         let len_bytes = len.to_le_bytes();
+
+        encoder.write_all(&key_len_bytes)?;
+        encoder.write_all(key_bytes)?;
+
         encoder.write_all(&len_bytes)?;
         encoder.write_all(&bytes)?;
+
         c += 1;
     }
     println!("Written: {} messages", c);
 
+    encoder.flush()?;
     let mut writer = encoder.finish()?;
+    // Write num messages to front of file
+    writer.flush()?;
+    writer.seek(std::io::SeekFrom::Start(0))?;
+    writer.write_all(&c.to_le_bytes())?;
     writer.flush()?;
 
     Ok(())
