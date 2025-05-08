@@ -5,10 +5,12 @@ mod proto_loader;
 
 use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
+use indicatif::{ProgressBar, ProgressStyle};
 use prost_reflect::prost::Message;
 use prost_reflect::{DynamicMessage, MessageDescriptor, ReflectMessage, Value};
 use proto_faker::ProtoFaker;
 use proto_loader::ProtoLoader;
+use rayon::iter::ParallelIterator;
 use rdkafka::config::ClientConfig;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use schema_registry_converter::async_impl::proto_raw::ProtoRawEncoder;
@@ -103,19 +105,37 @@ async fn main() -> Result<()> {
 
     // Load the proto file
     let mut loader = ProtoLoader::new();
-    loader.load_proto_file(&common.proto_file)?;
+    loader.load_proto_file(&common.proto_file).unwrap();
 
     // Get the message descriptor
-    let message_descriptor = loader.get_message_descriptor(&common.message_type)?;
+    let message_descriptor = loader.get_message_descriptor(&common.message_type).unwrap();
     println!("Found message type: {}", message_descriptor.full_name());
 
-    let faker = ProtoFaker::new(common.pools.clone().unwrap_or(vec![]));
+    let (tx, messages) = std::sync::mpsc::sync_channel(100);
+    let loader1 = loader.clone();
+    let pools = common.pools.clone().unwrap_or(vec![]);
+    let message_descriptor1 = message_descriptor.clone();
+    let count = common.count;
+    std::thread::spawn(move || {
+        let faker = ProtoFaker::new(pools);
 
-    let messages = std::iter::repeat_n((), common.count).map(|_| {
-        faker
-            .generate_dynamic(&loader, &message_descriptor)
-            .unwrap()
+        rayon::iter::repeatn((), count).for_each(|_| {
+            let msg = faker
+                .generate_dynamic(&loader1, &message_descriptor1)
+                .unwrap();
+
+            tx.send(msg).unwrap();
+        });
     });
+    let bar = ProgressBar::new(common.count as u64);
+    bar.set_style(
+        ProgressStyle::with_template(
+            "[{elapsed_precise} / {eta_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg} [{per_sec}]",
+        )
+        .unwrap()
+        .progress_chars("##-"),
+    );
+    let messages = messages.into_iter().inspect(|_| bar.inc(1));
 
     match args.cmd {
         Commands::Publish {

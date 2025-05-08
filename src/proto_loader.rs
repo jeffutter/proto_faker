@@ -4,6 +4,7 @@ use prost_types::FileDescriptorProto;
 use std::fs;
 use std::path::Path;
 
+#[derive(Clone)]
 pub struct ProtoLoader {
     pool: DescriptorPool,
 }
