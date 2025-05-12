@@ -12,7 +12,7 @@ rand = "0.9"
 chrono = "0.4"
 bytes = "1.0"
 anyhow = "1.0"
-tempfile = "3.8"
+tempfile = "3.20"
 protoc-bin-vendored = "3.0"
 clap = { version = "4.4", features = ["derive"] }
 uuid = { version = "1.7.0", features = ["v4"] }
