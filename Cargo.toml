@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 prost = "0.13"
 prost-types = "0.13"
-prost-reflect = "0.15"
+prost-reflect = "0.16"
 fake = { version = "4.3", features = ["derive", "uuid"] }
 rand = "0.9"
 chrono = "0.4"
