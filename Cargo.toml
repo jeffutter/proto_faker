@@ -14,7 +14,7 @@ bytes = "1.0"
 anyhow = "1.0"
 tempfile = "3.8"
 protoc-bin-vendored = "3.0"
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"] }
 uuid = { version = "1.7.0", features = ["v4"] }
 winnow = "0.7.7"
 rdkafka = { version = "0.37", features = ["ssl-vendored", "cmake-build"] }
